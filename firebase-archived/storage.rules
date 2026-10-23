@@ -1,0 +1,20 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /cloud-games/{uid}/{fileName} {
+      // Any approved signed-in user can read/download
+      allow read: if request.auth != null;
+
+      // Users can only upload to their own folder
+      // Max 50MB, .swf files only
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size < 50 * 1024 * 1024
+        && request.resource.contentType == 'application/x-shockwave-flash';
+
+      // Owner can delete their own files
+      // Admins delete via Cloud Function (adminDeleteUser already auth-checks role)
+      allow delete: if request.auth != null;
+    }
+  }
+}

@@ -1,0 +1,31 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn()  { return request.auth != null; }
+    function callerData()  { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function isAdmin()     { return isSignedIn() && callerData().role == 'admin'; }
+    function isApproved()  { return isSignedIn() && callerData().status == 'approved'; }
+    function notCloudBanned() { return isSignedIn() && callerData().cloudBanned != true; }
+
+    match /users/{uid} {
+      allow read:   if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasAll(['username','email','status','role','createdAt'])
+        && request.resource.data.role   in ['user','admin']
+        && request.resource.data.status in ['pending','approved'];
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /cloudGames/{gameId} {
+      allow read:   if isApproved();
+      allow create: if isApproved() && notCloudBanned()
+        && request.resource.data.uploadedBy == request.auth.uid;
+      allow update: if isAdmin()
+        || (isApproved() && resource.data.uploadedBy == request.auth.uid);
+      allow delete: if isAdmin()
+        || (isApproved() && resource.data.uploadedBy == request.auth.uid);
+    }
+  }
+}

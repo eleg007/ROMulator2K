@@ -1,0 +1,1705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FLASHBACK — Flash Game Emulator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
+
+  <!-- Ruffle Flash Emulator -->
+  <script src="https://unpkg.com/@ruffle-rs/ruffle"></script>
+
+  <!-- JSZip for .zip extraction -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <style>
+    :root {
+      --bg:      #0a0a0f;
+      --surface: #12121a;
+      --surf2:   #1a1a28;
+      --border:  #2a2a3d;
+      --accent:  #ff4655;
+      --gold:    #ffcc00;
+      --green:   #44ff88;
+      --blue:    #4285f4;
+      --purple:  #9b5de5;
+      --text:    #e8e8f0;
+      --muted:   #5a5a78;
+      --glow:    rgba(255,70,85,0.35);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Space Mono', monospace; overflow-x: hidden; }
+
+    body::before {
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+      background: repeating-linear-gradient(to bottom, transparent 0px, transparent 3px, rgba(0,0,0,0.07) 3px, rgba(0,0,0,0.07) 4px);
+    }
+
+    /* ── Shared ── */
+    .inp {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); font-family: 'Space Mono', monospace; font-size: 0.75rem;
+      padding: 10px 14px; border-radius: 3px; outline: none; transition: border-color 0.2s;
+    }
+    .inp:focus { border-color: var(--accent); }
+    .inp::placeholder { color: var(--muted); }
+    select.inp { cursor: pointer; }
+
+    .btn {
+      font-family: 'Space Mono', monospace; font-size: 0.68rem; letter-spacing: 0.08em;
+      text-transform: uppercase; cursor: pointer; border-radius: 3px; padding: 9px 18px;
+      border: 1px solid transparent; transition: all 0.15s; white-space: nowrap;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn-primary:hover { background: #e03040; box-shadow: 0 0 16px var(--glow); }
+    .btn-google  { background: var(--blue); color: #fff; border-color: var(--blue); justify-content: center; }
+    .btn-google:hover { background: #3070d0; }
+    .btn-ghost   { background: transparent; border-color: var(--border); color: var(--text); }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-danger  { background: transparent; border-color: var(--accent); color: var(--accent); }
+    .btn-danger:hover { background: rgba(255,70,85,0.1); }
+    .btn-success { background: transparent; border-color: var(--green); color: var(--green); }
+    .btn-success:hover { background: rgba(68,255,136,0.08); }
+    .btn-warn    { background: transparent; border-color: var(--gold); color: var(--gold); }
+    .btn-warn:hover { background: rgba(255,204,0,0.08); }
+    .btn-purple  { background: transparent; border-color: var(--purple); color: var(--purple); }
+    .btn-purple:hover { background: rgba(155,93,229,0.1); }
+    .btn-sm  { padding: 5px 11px; font-size: 0.58rem; }
+    .btn-xs  { padding: 3px 8px;  font-size: 0.52rem; }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* ── Views ── */
+    .view { display: none; }
+    .view.active { display: flex; }
+
+    /* ══════════════════════
+       AUTH
+    ══════════════════════ */
+    #view-auth { min-height:100vh; flex-direction:column; align-items:center; justify-content:center; padding:24px; }
+    .auth-logo { font-family:'Bebas Neue',sans-serif; font-size:3.6rem; letter-spacing:0.1em; color:var(--accent); text-shadow:0 0 30px var(--glow); margin-bottom:4px; }
+    .auth-logo span { color:var(--gold); }
+    .auth-tagline { font-size:0.6rem; letter-spacing:0.3em; color:var(--muted); text-transform:uppercase; margin-bottom:32px; }
+    .auth-card { width:100%; max-width:400px; background:var(--surface); border:1px solid var(--border); border-radius:4px; overflow:hidden; box-shadow:0 24px 64px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,70,85,0.07); }
+    .auth-tabs { display:flex; border-bottom:1px solid var(--border); }
+    .auth-tab { flex:1; padding:14px; font-size:0.62rem; letter-spacing:0.18em; text-transform:uppercase; text-align:center; cursor:pointer; color:var(--muted); border:none; background:none; font-family:'Space Mono',monospace; transition:all 0.15s; border-bottom:2px solid transparent; }
+    .auth-tab.active { color:var(--accent); border-bottom-color:var(--accent); background:rgba(255,70,85,0.04); }
+    .auth-body { padding:28px; }
+    .auth-form { display:flex; flex-direction:column; gap:14px; }
+    .auth-form .field { display:flex; flex-direction:column; gap:5px; }
+    .auth-form .lbl { font-size:0.58rem; letter-spacing:0.15em; color:var(--muted); text-transform:uppercase; }
+    .remember-row { display:flex; align-items:center; gap:10px; font-size:0.68rem; color:var(--muted); cursor:pointer; }
+    .remember-row input[type=checkbox] { accent-color:var(--accent); width:14px; height:14px; cursor:pointer; }
+    .divider { display:flex; align-items:center; gap:10px; font-size:0.58rem; color:var(--muted); }
+    .divider::before, .divider::after { content:''; flex:1; height:1px; background:var(--border); }
+    .auth-error { font-size:0.65rem; color:var(--accent); padding:8px 12px; background:rgba(255,70,85,0.08); border:1px solid rgba(255,70,85,0.22); border-radius:3px; display:none; }
+    .auth-error.show { display:block; }
+
+    /* ══════════════════════
+       PENDING / REVOKED
+    ══════════════════════ */
+    #view-pending, #view-revoked { min-height:100vh; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:32px; }
+    .st-icon  { font-size:4.5rem; margin-bottom:20px; animation:float 3s ease-in-out infinite; }
+    .st-title { font-family:'Bebas Neue',sans-serif; font-size:2.8rem; letter-spacing:0.12em; margin-bottom:12px; }
+    .st-body  { font-size:0.72rem; color:var(--muted); max-width:400px; line-height:1.85; margin-bottom:24px; }
+    .badge-pill { display:inline-block; font-size:0.58rem; letter-spacing:0.2em; text-transform:uppercase; padding:5px 16px; border-radius:3px; border:1px solid; }
+    .b-pending { border-color:var(--gold); color:var(--gold); background:rgba(255,204,0,0.07); }
+    .b-revoked { border-color:var(--accent); color:var(--accent); background:rgba(255,70,85,0.07); }
+
+    /* ══════════════════════
+       MAIN APP
+    ══════════════════════ */
+    #view-app { flex-direction:column; min-height:100vh; }
+    .app-header { display:flex; align-items:center; justify-content:space-between; padding:13px 28px; border-bottom:1px solid var(--border); position:relative; flex-shrink:0; }
+    .app-header::after { content:''; position:absolute; bottom:-1px; left:0; right:0; height:1px; background:linear-gradient(90deg,transparent,var(--accent),transparent); }
+    .logo { font-family:'Bebas Neue',sans-serif; font-size:1.9rem; letter-spacing:0.12em; color:var(--accent); text-shadow:0 0 18px var(--glow); user-select:none; }
+    .logo span { color:var(--gold); }
+    .header-right { display:flex; align-items:center; gap:8px; }
+    .user-chip { font-size:0.6rem; color:var(--muted); letter-spacing:0.08em; padding:4px 11px; background:var(--surface); border:1px solid var(--border); border-radius:20px; }
+    .user-chip strong { color:var(--text); }
+
+    .app-body { display:grid; grid-template-columns:300px 1fr; flex:1; min-height:0; }
+
+    /* Sidebar */
+    aside { border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
+    .sidebar-tabs { display:flex; border-bottom:1px solid var(--border); flex-shrink:0; }
+    .sidebar-tab { flex:1; padding:10px; font-size:0.55rem; letter-spacing:0.16em; text-transform:uppercase; text-align:center; cursor:pointer; color:var(--muted); border:none; background:none; font-family:'Space Mono',monospace; transition:all 0.15s; border-bottom:2px solid transparent; }
+    .sidebar-tab.active { color:var(--accent); border-bottom-color:var(--accent); background:rgba(255,70,85,0.04); }
+    .sidebar-panel { display:none; flex-direction:column; flex:1; overflow-y:auto; padding:14px; gap:14px; }
+    .sidebar-panel.active { display:flex; }
+    .section-lbl { font-size:0.55rem; letter-spacing:0.25em; text-transform:uppercase; color:var(--muted); margin-bottom:7px; }
+
+    /* Upload */
+    .upload-zone { border:2px dashed var(--border); border-radius:4px; padding:18px 12px; text-align:center; cursor:pointer; transition:all 0.2s; position:relative; }
+    .upload-zone:hover, .upload-zone.drag-over { border-color:var(--accent); background:rgba(255,70,85,0.04); }
+    .upload-zone input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
+    .upload-icon { font-size:1.7rem; display:block; margin-bottom:5px; }
+    .upload-zone p { font-size:0.6rem; color:var(--muted); line-height:1.5; }
+    .upload-zone strong { color:var(--accent); display:block; font-size:0.68rem; margin-bottom:2px; }
+    .upload-prog { height:3px; background:var(--border); border-radius:2px; overflow:hidden; display:none; margin-top:6px; }
+    .upload-prog.show { display:block; }
+    .upload-prog-bar { height:100%; background:var(--green); width:0%; transition:width 0.15s; }
+    .prog-label { font-size:0.54rem; color:var(--muted); margin-top:4px; display:none; }
+    .prog-label.show { display:block; }
+
+    /* Share toggle */
+    .share-row { display:flex; align-items:center; justify-content:space-between; padding:7px 10px; background:var(--surf2); border:1px solid var(--border); border-radius:3px; font-size:0.6rem; color:var(--muted); }
+    .share-row.banned { opacity:0.4; pointer-events:none; }
+    .toggle { position:relative; width:32px; height:17px; }
+    .toggle input { opacity:0; width:0; height:0; }
+    .toggle-knob { position:absolute; inset:0; background:var(--border); border-radius:17px; cursor:pointer; transition:background 0.2s; }
+    .toggle-knob:before { content:''; position:absolute; width:11px; height:11px; left:3px; bottom:3px; background:white; border-radius:50%; transition:transform 0.2s; }
+    .toggle input:checked + .toggle-knob { background:var(--green); }
+    .toggle input:checked + .toggle-knob:before { transform:translateX(15px); }
+
+    /* Game list */
+    .game-list { display:flex; flex-direction:column; gap:4px; }
+    .game-item { display:flex; align-items:center; gap:9px; padding:8px 9px; border-radius:3px; cursor:pointer; border:1px solid transparent; transition:all 0.13s; background:var(--surface); }
+    .game-item:hover { border-color:var(--border); background:var(--surf2); }
+    .game-item.active { border-color:var(--accent); background:rgba(255,70,85,0.08); }
+    .g-icon { width:30px; height:30px; background:var(--border); border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:0.85rem; flex-shrink:0; }
+    .g-info { flex:1; min-width:0; }
+    .g-name { font-size:0.67rem; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .g-meta { font-size:0.52rem; color:var(--muted); margin-top:2px; }
+    .rm-btn { background:none; border:none; color:var(--muted); cursor:pointer; font-size:0.68rem; padding:2px 5px; border-radius:2px; transition:color 0.13s; flex-shrink:0; }
+    .rm-btn:hover { color:var(--accent); }
+    .empty-lib { font-size:0.62rem; color:var(--muted); text-align:center; padding:12px; line-height:1.75; font-style:italic; }
+
+    /* Cloud items */
+    .cloud-item { display:flex; align-items:center; gap:9px; padding:8px 9px; border-radius:3px; cursor:pointer; border:1px solid transparent; transition:all 0.13s; background:var(--surface); }
+    .cloud-item:hover { border-color:var(--border); background:var(--surf2); }
+    .cloud-item.active { border-color:var(--gold); background:rgba(255,204,0,0.06); }
+    .cloud-tag   { font-size:0.46rem; letter-spacing:0.1em; padding:2px 5px; border-radius:2px; border:1px solid var(--gold); color:var(--gold); flex-shrink:0; }
+    .cache-tag   { font-size:0.46rem; letter-spacing:0.1em; padding:2px 5px; border-radius:2px; border:1px solid var(--green); color:var(--green); flex-shrink:0; }
+    .cloud-actions { display:flex; gap:4px; align-items:center; flex-shrink:0; }
+    .cloud-loading { font-size:0.62rem; color:var(--muted); text-align:center; padding:20px; font-style:italic; }
+    .cache-bar { display:flex; align-items:center; justify-content:space-between; padding:6px 10px; background:var(--surf2); border:1px solid var(--border); border-radius:3px; font-size:0.57rem; color:var(--muted); }
+
+    /* ══════════════════════
+       MAIN PLAYER AREA
+    ══════════════════════ */
+    main { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:28px; overflow:auto; }
+    .player-wrap { width:100%; max-width:980px; display:flex; flex-direction:column; gap:12px; }
+    .player-hdr { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+    .now-playing { font-family:'Bebas Neue',sans-serif; font-size:1.25rem; letter-spacing:0.08em; }
+    .np-lbl { font-family:'Space Mono',monospace; font-size:0.5rem; letter-spacing:0.3em; color:var(--accent); display:block; margin-bottom:1px; }
+    .p-controls { display:flex; gap:5px; flex-wrap:wrap; align-items:center; }
+
+    /* Ruffle container */
+    .ruffle-wrap { width:100%; aspect-ratio:4/3; background:#000; border:1px solid var(--border); position:relative; overflow:hidden; box-shadow:0 0 0 1px rgba(255,70,85,0.09), 0 18px 55px rgba(0,0,0,0.6); transition:aspect-ratio 0.25s ease; }
+    .ruffle-wrap ruffle-player { width:100%; height:100%; display:block; }
+    .ruffle-wrap::after { content:''; position:absolute; inset:0; background:radial-gradient(ellipse at center,transparent 68%,rgba(0,0,0,0.42) 100%); pointer-events:none; z-index:10; }
+
+    .status-bar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; font-size:0.56rem; color:var(--muted); letter-spacing:0.08em; padding-top:7px; border-top:1px solid var(--border); }
+    .s-dot { width:6px; height:6px; border-radius:50%; background:var(--muted); display:inline-block; margin-right:5px; }
+    .s-dot.on { background:var(--green); box-shadow:0 0 7px var(--green); animation:pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.38} }
+    @keyframes float  { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+
+    .empty-state { width:100%; max-width:480px; text-align:center; }
+    .empty-state .bi { font-size:4.5rem; display:block; margin-bottom:20px; filter:drop-shadow(0 0 18px rgba(255,204,0,0.28)); animation:float 3s ease-in-out infinite; }
+    .empty-state h2 { font-family:'Bebas Neue',sans-serif; font-size:2.2rem; letter-spacing:0.1em; margin-bottom:8px; }
+    .empty-state p { font-size:0.68rem; color:var(--muted); line-height:1.75; }
+    .kbd { display:inline-block; background:var(--surface); border:1px solid var(--border); border-radius:3px; padding:1px 7px; font-size:0.66rem; }
+
+    /* ══════════════════════
+       SAVE STATES PANEL
+    ══════════════════════ */
+    .save-states-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .save-slot {
+      background:var(--surf2); border:1px solid var(--border); border-radius:3px;
+      overflow:hidden; cursor:pointer; transition:all 0.15s; position:relative;
+    }
+    .save-slot:hover { border-color:var(--purple); }
+    .save-slot.occupied:hover { border-color:var(--green); }
+    .save-slot .slot-thumb {
+      width:100%; aspect-ratio:4/3; background:var(--bg);
+      display:flex; align-items:center; justify-content:center;
+      font-size:1.5rem; position:relative; overflow:hidden;
+    }
+    .save-slot .slot-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+    .save-slot .slot-thumb .empty-slot-icon { color:var(--border); font-size:1.8rem; }
+    .save-slot .slot-info { padding:5px 7px; }
+    .save-slot .slot-name { font-size:0.58rem; font-weight:700; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .save-slot .slot-date { font-size:0.5rem; color:var(--muted); margin-top:1px; }
+    .save-slot .slot-actions { display:flex; gap:3px; padding:4px 5px 5px; border-top:1px solid var(--border); }
+    .slot-load-btn { flex:1; background:none; border:1px solid var(--green); color:var(--green); font-family:'Space Mono',monospace; font-size:0.5rem; padding:3px 5px; border-radius:2px; cursor:pointer; letter-spacing:0.08em; transition:all 0.12s; text-transform:uppercase; }
+    .slot-load-btn:hover { background:rgba(68,255,136,0.1); }
+    .slot-del-btn  { background:none; border:1px solid var(--border); color:var(--muted); font-size:0.6rem; padding:3px 6px; border-radius:2px; cursor:pointer; transition:all 0.12s; }
+    .slot-del-btn:hover { border-color:var(--accent); color:var(--accent); }
+    .no-game-msg { font-size:0.63rem; color:var(--muted); text-align:center; padding:16px; font-style:italic; line-height:1.6; }
+
+    /* ══════════════════════
+       ADMIN
+    ══════════════════════ */
+    #view-admin { flex-direction:column; min-height:100vh; }
+    .admin-hdr { display:flex; align-items:center; justify-content:space-between; padding:15px 28px; border-bottom:1px solid var(--border); flex-shrink:0; background:linear-gradient(90deg,rgba(255,204,0,0.03) 0%,transparent 60%); }
+    .admin-title { font-family:'Bebas Neue',sans-serif; font-size:1.75rem; letter-spacing:0.1em; color:var(--gold); }
+    .admin-sub   { font-size:0.56rem; color:var(--muted); letter-spacing:0.15em; text-transform:uppercase; }
+    .admin-body  { flex:1; overflow:auto; padding:24px; }
+    .filter-bar { display:flex; gap:7px; margin-bottom:18px; flex-wrap:wrap; }
+    .filter-btn { font-family:'Space Mono',monospace; font-size:0.55rem; letter-spacing:0.15em; text-transform:uppercase; padding:5px 14px; border-radius:2px; border:1px solid var(--border); background:none; color:var(--muted); cursor:pointer; transition:all 0.13s; }
+    .filter-btn:hover, .filter-btn.active { border-color:var(--gold); color:var(--gold); background:rgba(255,204,0,0.05); }
+    .filter-btn[data-f="approved"].active { border-color:var(--green); color:var(--green); background:rgba(68,255,136,0.05); }
+    .filter-btn[data-f="revoked"].active, .filter-btn[data-f="rejected"].active { border-color:var(--accent); color:var(--accent); background:rgba(255,70,85,0.05); }
+    .tbl-wrap { overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; font-size:0.67rem; }
+    thead tr { border-bottom:1px solid var(--border); }
+    th { padding:7px 14px; text-align:left; font-size:0.52rem; letter-spacing:0.2em; text-transform:uppercase; color:var(--muted); font-weight:700; white-space:nowrap; }
+    td { padding:10px 14px; border-bottom:1px solid rgba(42,42,61,0.5); vertical-align:middle; }
+    tr:hover td { background:var(--surface); }
+    .u-name  { font-weight:700; }
+    .u-email { font-size:0.56rem; color:var(--muted); margin-top:2px; }
+    .tag { display:inline-block; font-size:0.48rem; letter-spacing:0.15em; text-transform:uppercase; padding:2px 7px; border-radius:2px; border:1px solid; margin:1px; }
+    .t-admin    { border-color:var(--gold);   color:var(--gold);   background:rgba(255,204,0,0.07); }
+    .t-user     { border-color:var(--border); color:var(--muted); }
+    .t-pending  { border-color:var(--gold);   color:var(--gold);   background:rgba(255,204,0,0.07); }
+    .t-approved { border-color:var(--green);  color:var(--green);  background:rgba(68,255,136,0.07); }
+    .t-revoked, .t-rejected { border-color:var(--accent); color:var(--accent); background:rgba(255,70,85,0.07); }
+    .t-cloudbanned { border-color:var(--accent); color:var(--accent); background:rgba(255,70,85,0.07); }
+    .act-cell { display:flex; gap:4px; flex-wrap:wrap; align-items:center; }
+
+    /* ══════════════════════
+       MODALS (shared)
+    ══════════════════════ */
+    .overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.82); z-index:1000; align-items:center; justify-content:center; padding:16px; }
+    .overlay.open { display:flex; }
+    .modal-box { background:var(--surface); border:1px solid var(--border); border-radius:4px; width:100%; max-width:480px; padding:28px; box-shadow:0 24px 64px rgba(0,0,0,0.72); max-height:90vh; overflow-y:auto; }
+    .modal-title { font-family:'Bebas Neue',sans-serif; font-size:1.5rem; letter-spacing:0.1em; margin-bottom:3px; }
+    .modal-sub   { font-size:0.57rem; color:var(--muted); margin-bottom:22px; letter-spacing:0.08em; }
+    .modal-form  { display:flex; flex-direction:column; gap:13px; }
+    .modal-form .flbl { font-size:0.56rem; letter-spacing:0.15em; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:5px; }
+    .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:20px; flex-wrap:wrap; }
+    .check-row { display:flex; align-items:flex-start; gap:10px; font-size:0.67rem; color:var(--text); line-height:1.5; cursor:pointer; padding:10px 12px; background:rgba(255,70,85,0.06); border:1px solid rgba(255,70,85,0.2); border-radius:3px; }
+    .check-row input[type=checkbox] { accent-color:var(--accent); width:14px; height:14px; flex-shrink:0; margin-top:2px; cursor:pointer; }
+    .form-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+
+    /* ══════════════════════
+       SETTINGS MODAL
+    ══════════════════════ */
+    #settingsModal .modal-title { color:var(--purple); }
+    .settings-section { margin-bottom:20px; }
+    .settings-section-title { font-size:0.58rem; letter-spacing:0.22em; text-transform:uppercase; color:var(--muted); margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+
+    /* Key binding grid */
+    .keybind-grid { display:flex; flex-direction:column; gap:8px; }
+    .keybind-row { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:0.65rem; }
+    .keybind-label { color:var(--muted); flex:1; min-width:0; }
+    .keybind-input {
+      width:120px; background:var(--bg); border:1px solid var(--border); color:var(--text);
+      font-family:'Space Mono',monospace; font-size:0.65rem; padding:5px 9px; border-radius:3px;
+      cursor:pointer; text-align:center; transition:border-color 0.15s; flex-shrink:0;
+    }
+    .keybind-input:focus { border-color:var(--purple); outline:none; }
+    .keybind-input.listening { border-color:var(--purple); background:rgba(155,93,229,0.1); animation:borderPulse 0.8s ease-in-out infinite; }
+    @keyframes borderPulse { 0%,100%{border-color:var(--purple)} 50%{border-color:transparent} }
+
+    /* Performance sliders / selects */
+    .perf-row { display:flex; align-items:center; gap:10px; font-size:0.63rem; }
+    .perf-row label { color:var(--muted); flex:1; min-width:0; }
+    .perf-row .inp { flex:0 0 160px; }
+    .perf-hint { font-size:0.52rem; color:var(--muted); line-height:1.6; margin-top:4px; font-style:italic; }
+
+    /* Save state name modal */
+    #saveNameModal .modal-title { color:var(--purple); }
+
+    /* Toast */
+    #toast { position:fixed; bottom:26px; left:50%; transform:translateX(-50%) translateY(80px); background:var(--surface); border:1px solid var(--accent); color:var(--text); font-size:0.69rem; padding:10px 22px; border-radius:3px; letter-spacing:0.07em; transition:transform 0.28s ease; z-index:9000; box-shadow:0 0 22px var(--glow); pointer-events:none; white-space:nowrap; }
+    #toast.show { transform:translateX(-50%) translateY(0); }
+
+    @media (max-width:700px) {
+      .app-body { grid-template-columns:1fr; }
+      aside { border-right:none; border-bottom:1px solid var(--border); max-height:300px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ════ AUTH VIEW ════ -->
+<div id="view-auth" class="view">
+  <div class="auth-logo">FLASH<span>BACK</span></div>
+  <div class="auth-tagline">Flash Game Emulator</div>
+  <div class="auth-card">
+    <div class="auth-tabs">
+      <button class="auth-tab active" onclick="switchAuthTab('login')">Sign In</button>
+      <button class="auth-tab"        onclick="switchAuthTab('register')">Register</button>
+    </div>
+    <div class="auth-body">
+      <form id="form-login" class="auth-form" onsubmit="handleLogin(event)">
+        <div class="auth-error" id="login-error"></div>
+        <div class="field"><span class="lbl">Email</span><input class="inp" type="email" id="login-email" required placeholder="you@example.com" /></div>
+        <div class="field"><span class="lbl">Password</span><input class="inp" type="password" id="login-pwd" required placeholder="••••••••" /></div>
+        <label class="remember-row"><input type="checkbox" id="remember-me" checked /> Remember me</label>
+        <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center;">Sign In →</button>
+        <div class="divider">or</div>
+        <button class="btn btn-google" type="button" onclick="handleGoogle()" style="width:100%;">
+          <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#fff" d="M44.5 20H24v8.5h11.8C34.7 33.9 29.9 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 5.1 29.6 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21c10.5 0 20-7.6 20-21 0-1.3-.2-2.7-.5-4z"/></svg>
+          Continue with Google
+        </button>
+      </form>
+      <form id="form-register" class="auth-form" style="display:none;" onsubmit="handleRegister(event)">
+        <div class="auth-error" id="reg-error"></div>
+        <div class="field"><span class="lbl">Username</span><input class="inp" type="text" id="reg-username" required placeholder="CoolGamer42" minlength="3" /></div>
+        <div class="field"><span class="lbl">Email</span><input class="inp" type="email" id="reg-email" required placeholder="you@example.com" /></div>
+        <div class="field"><span class="lbl">Password</span><input class="inp" type="password" id="reg-pwd" required placeholder="Min 6 characters" minlength="6" /></div>
+        <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center;">Create Account →</button>
+        <div class="divider">or</div>
+        <button class="btn btn-google" type="button" onclick="handleGoogle()" style="width:100%;">
+          <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#fff" d="M44.5 20H24v8.5h11.8C34.7 33.9 29.9 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 5.1 29.6 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21c10.5 0 20-7.6 20-21 0-1.3-.2-2.7-.5-4z"/></svg>
+          Continue with Google
+        </button>
+        <p style="font-size:0.59rem;color:var(--muted);text-align:center;line-height:1.65;">An admin must approve your account before access is granted.</p>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ════ PENDING VIEW ════ -->
+<div id="view-pending" class="view" style="flex-direction:column;">
+  <div class="st-icon">⏳</div>
+  <div class="st-title">Pending Approval</div>
+  <div class="st-body">Your account is waiting for admin review. You'll receive an email once activated.</div>
+  <span class="badge-pill b-pending">AWAITING REVIEW</span>
+  <button class="btn btn-ghost btn-sm" onclick="auth.signOut()" style="margin-top:20px;">Sign Out</button>
+</div>
+
+<!-- ════ REVOKED VIEW ════ -->
+<div id="view-revoked" class="view" style="flex-direction:column;">
+  <div class="st-icon">🚫</div>
+  <div class="st-title">Access Denied</div>
+  <div class="st-body">Your access has been revoked or rejected. Contact the admin if you believe this is an error.</div>
+  <span class="badge-pill b-revoked">ACCESS DENIED</span>
+  <button class="btn btn-ghost btn-sm" onclick="auth.signOut()" style="margin-top:20px;">Sign Out</button>
+</div>
+
+<!-- ════ MAIN APP VIEW ════ -->
+<div id="view-app" class="view">
+  <header class="app-header">
+    <div class="logo">FLASH<span>BACK</span></div>
+    <div class="header-right">
+      <div class="user-chip"><strong id="hdr-username">—</strong></div>
+      <button class="btn btn-purple btn-sm" onclick="openSettings()">⚙ Settings</button>
+      <button class="btn btn-ghost btn-sm" id="admin-btn" onclick="showView('admin')" style="display:none;">🛡 Admin</button>
+      <button class="btn btn-ghost btn-sm" onclick="auth.signOut()">Sign Out</button>
+    </div>
+  </header>
+
+  <div class="app-body">
+    <aside>
+      <div class="sidebar-tabs">
+        <button class="sidebar-tab active" data-tab="local" onclick="switchSidebarTab('local')">📁 Local</button>
+        <button class="sidebar-tab"        data-tab="saves" onclick="switchSidebarTab('saves')">💾 Saves</button>
+        <button class="sidebar-tab"        data-tab="cloud" onclick="switchSidebarTab('cloud')">☁ Cloud</button>
+      </div>
+
+      <!-- LOCAL PANEL -->
+      <div id="panel-local" class="sidebar-panel active">
+        <div>
+          <div class="section-lbl">Load Game</div>
+          <div class="upload-zone" id="uploadZone">
+            <input type="file" id="fileInput" accept=".swf,.zip" multiple />
+            <span class="upload-icon">📂</span>
+            <strong>Drop files here</strong>
+            <p>.swf files or .zip archives</p>
+          </div>
+          <div class="upload-prog" id="uploadProg"><div class="upload-prog-bar" id="uploadProgBar"></div></div>
+          <div class="prog-label" id="progLabel"></div>
+        </div>
+        <div class="share-row" id="shareRow">
+          <span>☁ Share to Cloud Library</span>
+          <label class="toggle"><input type="checkbox" id="shareToggle" /><span class="toggle-knob"></span></label>
+        </div>
+        <div>
+          <div class="section-lbl">My Games (<span id="gameCount">0</span>)</div>
+          <div class="game-list" id="gameList">
+            <div class="empty-lib" id="emptyLib">No games loaded.<br/>Drop .swf or .zip files above.</div>
+          </div>
+        </div>
+        <div style="margin-top:auto;">
+          <p style="font-size:0.53rem;color:var(--muted);line-height:1.7;">Powered by <strong style="color:var(--text);">Ruffle</strong>. Files stay local unless cloud sharing is enabled.</p>
+        </div>
+      </div>
+
+      <!-- SAVES PANEL -->
+      <div id="panel-saves" class="sidebar-panel">
+        <div>
+          <div class="section-lbl" id="savesLabel">Save States</div>
+          <div id="savesGameName" style="font-size:0.6rem;color:var(--gold);margin-bottom:10px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:none;"></div>
+          <div id="savesContent">
+            <div class="no-game-msg">Load a game first to manage save states.</div>
+          </div>
+        </div>
+        <div style="margin-top:auto;">
+          <p style="font-size:0.53rem;color:var(--muted);line-height:1.7;">Save states capture a screenshot + game metadata. They are stored locally in your browser.</p>
+        </div>
+      </div>
+
+      <!-- CLOUD PANEL -->
+      <div id="panel-cloud" class="sidebar-panel">
+        <div class="cache-bar">
+          <span>💾 <span id="cacheCount">0</span> game(s) cached</span>
+          <button class="btn btn-xs btn-ghost" onclick="clearAllCache()">Clear</button>
+        </div>
+        <div>
+          <div class="section-lbl">Cloud Library (<span id="cloudCount">0</span>)</div>
+          <div class="cloud-loading" id="cloudLoading">Loading…</div>
+          <div class="game-list" id="cloudList" style="display:none;"></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main area -->
+    <main id="mainArea">
+      <div class="empty-state" id="emptyState">
+        <span class="bi">🕹️</span>
+        <h2>Ready to Play</h2>
+        <p>Load a <span class="kbd">.swf</span> or <span class="kbd">.zip</span> from the sidebar,<br/>or browse the ☁ Cloud Library.</p>
+      </div>
+      <div class="player-wrap" id="playerWrap" style="display:none;">
+        <div class="player-hdr">
+          <div class="now-playing">
+            <span class="np-lbl">▶ NOW PLAYING</span>
+            <span id="gameTitle">—</span>
+          </div>
+          <div class="p-controls">
+            <button class="btn btn-ghost btn-sm" onclick="restartGame()">↺ Restart</button>
+            <button class="btn btn-ghost btn-sm" id="pauseBtn" onclick="togglePause()">❚❚ Pause</button>
+            <button class="btn btn-purple btn-sm" onclick="quickSave()">💾 Save</button>
+            <button class="btn btn-ghost btn-sm" onclick="toggleFullscreen()">⛶ Full</button>
+            <button class="btn btn-danger btn-sm" onclick="stopGame()">■ Stop</button>
+          </div>
+        </div>
+        <div class="ruffle-wrap" id="ruffleWrap"></div>
+        <div class="status-bar">
+          <div style="display:flex;align-items:center;"><span class="s-dot" id="sDot"></span><span id="sText">IDLE</span></div>
+          <div id="dimInfo"  style="font-size:0.55rem;color:var(--muted);">—</div>
+          <div id="fileInfo" style="font-size:0.55rem;color:var(--muted);">—</div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ════ ADMIN VIEW ════ -->
+<div id="view-admin" class="view">
+  <div class="admin-hdr">
+    <div><div class="admin-title">Admin Panel</div><div class="admin-sub">User Management</div></div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-ghost btn-sm" onclick="loadAdminUsers()">↺ Refresh</button>
+      <button class="btn btn-ghost btn-sm" onclick="showView('app')">← App</button>
+    </div>
+  </div>
+  <div class="admin-body">
+    <div class="filter-bar">
+      <button class="filter-btn active" data-f="all"      onclick="filterUsers('all')">All</button>
+      <button class="filter-btn"        data-f="pending"  onclick="filterUsers('pending')">Pending</button>
+      <button class="filter-btn"        data-f="approved" onclick="filterUsers('approved')">Approved</button>
+      <button class="filter-btn"        data-f="revoked"  onclick="filterUsers('revoked')">Revoked</button>
+      <button class="filter-btn"        data-f="rejected" onclick="filterUsers('rejected')">Rejected</button>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>User</th><th>Status / Flags</th><th>Role</th><th>Joined</th><th>Actions</th></tr></thead>
+        <tbody id="usersTbody"><tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px;font-size:0.63rem;">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ════ SETTINGS MODAL ════ -->
+<div class="overlay" id="settingsModal">
+  <div class="modal-box" style="max-width:560px;">
+    <div class="modal-title" style="color:var(--purple);">⚙ Settings</div>
+    <div class="modal-sub">Custom controls &amp; performance options</div>
+
+    <!-- CONTROLS -->
+    <div class="settings-section">
+      <div class="settings-section-title">🎮 Custom Keyboard Controls</div>
+      <p style="font-size:0.58rem;color:var(--muted);margin-bottom:12px;line-height:1.6;">
+        Click any field and press a key to remap it. These bindings are remapped <em>in the browser</em> before being passed to the Flash game — useful for games with hardcoded awkward keys.
+      </p>
+      <div class="keybind-grid" id="keybindGrid"></div>
+      <button class="btn btn-ghost btn-sm" onclick="resetKeybinds()" style="margin-top:10px;font-size:0.55rem;">↺ Reset to Defaults</button>
+    </div>
+
+    <!-- PERFORMANCE -->
+    <div class="settings-section">
+      <div class="settings-section-title">⚡ Performance Settings</div>
+      <p style="font-size:0.58rem;color:var(--muted);margin-bottom:12px;line-height:1.6;">
+        Applied on next game load. Useful for resource-intensive games. Changes don't affect a currently running game — hit Restart after saving.
+      </p>
+
+      <div class="perf-row" style="margin-bottom:10px;">
+        <label>Render Backend</label>
+        <select class="inp" id="pref-renderer" style="flex:0 0 160px;">
+          <option value="">Auto (Recommended)</option>
+          <option value="webgpu">WebGPU (Best, if supported)</option>
+          <option value="wgpu-webgl">WGPU-WebGL (Default)</option>
+          <option value="webgl">WebGL (Faster init, fewer features)</option>
+          <option value="canvas">Canvas 2D (Slowest, most compat)</option>
+        </select>
+      </div>
+      <div class="perf-hint" style="margin-bottom:14px;">WebGPU gives the best performance on supported browsers (Chrome 113+). WGPU-WebGL is the current default and works everywhere. Canvas is best if you see thick/broken strokes.</div>
+
+      <div class="perf-row" style="margin-bottom:10px;">
+        <label>Render Quality</label>
+        <select class="inp" id="pref-quality" style="flex:0 0 160px;">
+          <option value="">Default (High)</option>
+          <option value="low">Low (best perf)</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="best">Best</option>
+          <option value="high8x8">High 8×8 supersampled</option>
+          <option value="high8x8linear">High 8×8 linear</option>
+        </select>
+      </div>
+      <div class="perf-hint" style="margin-bottom:14px;">Lower quality reduces GPU load significantly on intensive games.</div>
+
+      <div class="perf-row" style="margin-bottom:10px;">
+        <label>Frame Rate Cap</label>
+        <select class="inp" id="pref-framerate" style="flex:0 0 160px;">
+          <option value="">Native (SWF default)</option>
+          <option value="15">15 FPS (very low load)</option>
+          <option value="24">24 FPS</option>
+          <option value="30">30 FPS</option>
+          <option value="60">60 FPS (force high)</option>
+        </select>
+      </div>
+      <div class="perf-hint" style="margin-bottom:14px;">Capping FPS reduces CPU/GPU usage for heavy games. Setting it higher than the SWF's native rate has no effect.</div>
+
+      <div class="perf-row" style="margin-bottom:10px;">
+        <label>Max Script Time</label>
+        <select class="inp" id="pref-maxexec" style="flex:0 0 160px;">
+          <option value="">Default (15s)</option>
+          <option value="5">5 seconds</option>
+          <option value="10">10 seconds</option>
+          <option value="30">30 seconds (heavy games)</option>
+          <option value="60">60 seconds (very heavy)</option>
+          <option value="0">Unlimited (may freeze tab)</option>
+        </select>
+      </div>
+      <div class="perf-hint">Raise this if a complex game freezes mid-load saying a script timed out. Unlimited is risky — a broken game could hang your browser tab.</div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" onclick="closeSettings()">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="saveSettings()">Save Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════ SAVE STATE NAME MODAL ════ -->
+<div class="overlay" id="saveNameModal">
+  <div class="modal-box" style="max-width:380px;">
+    <div class="modal-title" style="color:var(--purple);">💾 Save State</div>
+    <div class="modal-sub">Give this save state a name</div>
+    <div class="modal-form">
+      <div><span class="flbl">Name</span><input class="inp" type="text" id="saveStateName" placeholder="e.g. Level 3 boss fight" maxlength="40" /></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" onclick="closeSaveNameModal()">Cancel</button>
+      <button class="btn btn-purple btn-sm" onclick="confirmSave()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════ EDIT USER MODAL ════ -->
+<div class="overlay" id="editModal">
+  <div class="modal-box">
+    <div class="modal-title" style="color:var(--gold);">Edit User</div>
+    <div class="modal-sub" id="editModalSub">—</div>
+    <div class="modal-form">
+      <div class="form-row">
+        <div><span class="flbl">Username</span><input class="inp" type="text" id="eu-username" /></div>
+        <div><span class="flbl">Email</span><input class="inp" type="email" id="eu-email" /></div>
+      </div>
+      <div class="form-row">
+        <div><span class="flbl">Status</span>
+          <select class="inp" id="eu-status">
+            <option value="pending">Pending</option><option value="approved">Approved</option>
+            <option value="revoked">Revoked</option><option value="rejected">Rejected</option>
+          </select>
+        </div>
+        <div><span class="flbl">Role</span>
+          <select class="inp" id="eu-role">
+            <option value="user">User</option><option value="admin">Admin</option>
+          </select>
+        </div>
+      </div>
+      <label class="check-row">
+        <input type="checkbox" id="eu-cloudbanned" />
+        <div><strong>Ban from Cloud Uploads</strong><br/><span style="font-size:0.58rem;color:var(--muted);">User can still play cloud games but cannot share files.</span></div>
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" onclick="closeEditModal()">Cancel</button>
+      <button class="btn btn-warn btn-sm"  onclick="sendPwdReset()">📧 Reset Password</button>
+      <button class="btn btn-primary btn-sm" onclick="saveUserEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════ DELETE CLOUD GAME MODAL ════ -->
+<div class="overlay" id="deleteCloudModal">
+  <div class="modal-box" style="max-width:400px;">
+    <div class="modal-title" style="color:var(--accent);">Delete Cloud Game</div>
+    <div class="modal-sub" id="dcm-sub">—</div>
+    <p style="font-size:0.67rem;color:var(--muted);line-height:1.65;margin-bottom:16px;">Remove this game from the cloud library? This cannot be undone and will delete the file from storage.</p>
+    <label class="check-row">
+      <input type="checkbox" id="dcm-ban" />
+      <div><strong>Also ban uploader from cloud uploads</strong><br/><span style="font-size:0.58rem;color:var(--muted);" id="dcm-uploader-label">The uploader will no longer be able to share files.</span></div>
+    </label>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" onclick="closeDeleteCloudModal()">Cancel</button>
+      <button class="btn btn-danger btn-sm" onclick="confirmDeleteCloud()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════ CONFIRM MODAL ════ -->
+<div class="overlay" id="confirmModal">
+  <div class="modal-box" style="max-width:360px;">
+    <div class="modal-title" style="color:var(--accent);" id="cfmTitle">Confirm</div>
+    <p style="font-size:0.69rem;color:var(--muted);margin:12px 0 24px;line-height:1.65;" id="cfmBody"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" onclick="closeConfirm()">Cancel</button>
+      <button class="btn btn-danger btn-sm" id="cfmOk">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════
+//  ★ FIREBASE CONFIG — replace with your values ★
+// ══════════════════════════════════════════════════
+const firebaseConfig = {
+  apiKey:            "YOUR_API_KEY",
+  authDomain:        "YOUR_PROJECT.firebaseapp.com",
+  projectId:         "YOUR_PROJECT_ID",
+  storageBucket:     "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId:             "YOUR_APP_ID"
+};
+firebase.initializeApp(firebaseConfig);
+const auth      = firebase.auth();
+const db        = firebase.firestore();
+const storage   = firebase.storage();
+const functions = firebase.functions();
+
+window.RufflePlayer = window.RufflePlayer || {};
+const getRuffle = () => window.RufflePlayer.newest();
+
+// ── State ──
+const games        = [];
+let currentGameIdx  = -1;
+let currentCloudGame = null;
+let rufflePlayer    = null;
+let isPaused        = false;
+let currentUserDoc  = null;
+let userStatusUnsub = null;
+let allUsers        = [];
+let editingUid      = null;
+let activeFilter    = 'all';
+let cloudCache      = [];
+let cachedGameIds   = new Set();
+let pendingDeleteCloudId     = null;
+let pendingDeleteCloudPath   = null;
+let pendingDeleteUploaderUid = null;
+let currentGameKey  = null;
+let cloudLibraryLoaded = false;  // guard: only render cloud list after it's been fetched
+
+// ══════════════════════════════════════════════════
+//  SETTINGS (persisted to localStorage)
+// ══════════════════════════════════════════════════
+const DEFAULT_SETTINGS = {
+  renderer:   '',     // '' = auto
+  quality:    '',     // '' = default
+  frameRate:  '',     // '' = native
+  maxExec:    '',     // '' = default (15s)
+};
+
+// Default key bindings: { actionName: { label, fromKey, toKey } }
+// fromKey = what the game expects; toKey = what the user wants to press
+// When user presses toKey, we translate it to fromKey before dispatching.
+const DEFAULT_KEYBINDS = [
+  { id: 'up',     label: 'Move Up',    fromKey: 'ArrowUp',    toKey: 'ArrowUp'    },
+  { id: 'down',   label: 'Move Down',  fromKey: 'ArrowDown',  toKey: 'ArrowDown'  },
+  { id: 'left',   label: 'Move Left',  fromKey: 'ArrowLeft',  toKey: 'ArrowLeft'  },
+  { id: 'right',  label: 'Move Right', fromKey: 'ArrowRight', toKey: 'ArrowRight' },
+  { id: 'action', label: 'Action / Jump', fromKey: 'Space',   toKey: 'Space'      },
+  { id: 'fire',   label: 'Fire / Attack', fromKey: 'KeyZ',    toKey: 'KeyZ'       },
+  { id: 'pause',  label: 'Pause (game)', fromKey: 'KeyP',     toKey: 'KeyP'       },
+];
+
+let perfSettings = { ...DEFAULT_SETTINGS };
+let keybinds     = DEFAULT_KEYBINDS.map(k => ({ ...k }));
+
+function loadSettingsFromStorage() {
+  try {
+    const ps = localStorage.getItem('fb_perf');
+    if (ps) perfSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(ps) };
+    const kb = localStorage.getItem('fb_keybinds');
+    if (kb) keybinds = JSON.parse(kb);
+  } catch {}
+}
+function saveSettingsToStorage() {
+  localStorage.setItem('fb_perf', JSON.stringify(perfSettings));
+  localStorage.setItem('fb_keybinds', JSON.stringify(keybinds));
+}
+loadSettingsFromStorage();
+
+// ── Settings modal ──
+function openSettings() {
+  document.getElementById('pref-renderer').value  = perfSettings.renderer  || '';
+  document.getElementById('pref-quality').value   = perfSettings.quality   || '';
+  document.getElementById('pref-framerate').value = perfSettings.frameRate || '';
+  document.getElementById('pref-maxexec').value   = perfSettings.maxExec   || '';
+  buildKeybindGrid();
+  document.getElementById('settingsModal').classList.add('open');
+}
+function closeSettings() {
+  document.getElementById('settingsModal').classList.remove('open');
+  stopListeningKeybind();
+}
+function saveSettings() {
+  perfSettings.renderer  = document.getElementById('pref-renderer').value;
+  perfSettings.quality   = document.getElementById('pref-quality').value;
+  perfSettings.frameRate = document.getElementById('pref-framerate').value;
+  perfSettings.maxExec   = document.getElementById('pref-maxexec').value;
+  saveSettingsToStorage();
+  closeSettings();
+  showToast('Settings saved — restart the game to apply.');
+}
+
+// ── Keybind grid ──
+let listeningEl  = null;
+let listeningIdx = null;
+
+function buildKeybindGrid() {
+  const grid = document.getElementById('keybindGrid');
+  grid.innerHTML = '';
+  keybinds.forEach((kb, i) => {
+    const row = document.createElement('div');
+    row.className = 'keybind-row';
+    const lbl = document.createElement('span');
+    lbl.className = 'keybind-label';
+    lbl.textContent = kb.label;
+    const inp = document.createElement('div');
+    inp.className   = 'keybind-input';
+    inp.tabIndex    = 0;
+    inp.textContent = formatKey(kb.toKey);
+    inp.dataset.idx = i;
+    inp.addEventListener('click',   () => startListeningKeybind(inp, i));
+    inp.addEventListener('keydown', (e) => { e.preventDefault(); e.stopPropagation(); if (listeningIdx === i) captureKey(e); });
+    row.appendChild(lbl);
+    row.appendChild(inp);
+    grid.appendChild(row);
+  });
+}
+
+function startListeningKeybind(el, idx) {
+  if (listeningEl) listeningEl.classList.remove('listening');
+  listeningEl  = el;
+  listeningIdx = idx;
+  el.classList.add('listening');
+  el.textContent = '— press a key —';
+  el.focus();
+}
+function stopListeningKeybind() {
+  if (listeningEl) { listeningEl.classList.remove('listening'); listeningEl = null; listeningIdx = null; }
+}
+function captureKey(e) {
+  if (listeningIdx === null) return;
+  const key = e.code;
+  if (key === 'Escape') { stopListeningKeybind(); buildKeybindGrid(); return; }
+  keybinds[listeningIdx].toKey = key;
+  saveSettingsToStorage();
+  stopListeningKeybind();
+  buildKeybindGrid();
+  showToast(`Mapped to ${formatKey(key)}`);
+}
+function formatKey(code) {
+  const map = { Space:'Space', ArrowUp:'↑', ArrowDown:'↓', ArrowLeft:'←', ArrowRight:'→', Enter:'Enter', Escape:'Esc', Backspace:'Bksp', ShiftLeft:'L-Shift', ShiftRight:'R-Shift', ControlLeft:'L-Ctrl', ControlRight:'R-Ctrl', AltLeft:'L-Alt', AltRight:'R-Alt' };
+  if (map[code]) return map[code];
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  if (code.startsWith('Numpad')) return 'NP' + code.slice(6);
+  return code;
+}
+function resetKeybinds() {
+  keybinds = DEFAULT_KEYBINDS.map(k => ({ ...k }));
+  saveSettingsToStorage();
+  buildKeybindGrid();
+  showToast('Keybinds reset to defaults');
+}
+
+// ── Key remapping interception ──
+// We intercept keydown events on the Ruffle container and re-dispatch
+// translated keys so the Flash game sees the original key it expects.
+function setupKeyRemap() {
+  document.addEventListener('keydown', handleKeyRemap, true);
+  document.addEventListener('keyup',   handleKeyRemap, true);
+}
+function handleKeyRemap(e) {
+  // Only intercept when a game is running
+  if (!rufflePlayer) return;
+  // Skip when typing in our own inputs
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  // Skip modifier-only keys
+  if (['Control','Shift','Alt','Meta'].includes(e.key)) return;
+
+  const mapping = keybinds.find(kb => kb.toKey === e.code && kb.toKey !== kb.fromKey);
+  if (!mapping) return; // no remap needed
+
+  e.preventDefault();
+  e.stopImmediatePropagation();
+
+  // Synthesize a new event with the fromKey the game expects
+  const ruffleEl = rufflePlayer;
+  if (!ruffleEl) return;
+  const fakeEvt = new KeyboardEvent(e.type, {
+    ...e,
+    code:    mapping.fromKey,
+    key:     codeToKey(mapping.fromKey),
+    bubbles: true,
+    cancelable: true,
+  });
+  ruffleEl.dispatchEvent(fakeEvt);
+}
+function codeToKey(code) {
+  const m = { Space:' ', ArrowUp:'ArrowUp', ArrowDown:'ArrowDown', ArrowLeft:'ArrowLeft', ArrowRight:'ArrowRight', Enter:'Enter', Escape:'Escape', Backspace:'Backspace' };
+  if (m[code]) return m[code];
+  if (code.startsWith('Key')) return code.slice(3).toLowerCase();
+  if (code.startsWith('Digit')) return code.slice(5);
+  return code;
+}
+setupKeyRemap();
+
+// ══════════════════════════════════════════════════
+//  INDEXEDDB — cloud game cache + save states
+// ══════════════════════════════════════════════════
+const IDB_NAME       = 'flashback-v4';
+const STORE_CACHE    = 'swf-blobs';
+const STORE_SAVES    = 'save-states';
+
+function openIDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(IDB_NAME, 2);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_CACHE)) db.createObjectStore(STORE_CACHE);
+      if (!db.objectStoreNames.contains(STORE_SAVES)) db.createObjectStore(STORE_SAVES);
+    };
+    req.onsuccess = e => res(e.target.result);
+    req.onerror   = () => rej(req.error);
+  });
+}
+async function idbGet(store, key) {
+  const db = await openIDB();
+  return new Promise(res => {
+    const req = db.transaction(store, 'readonly').objectStore(store).get(key);
+    req.onsuccess = () => res(req.result ?? null);
+    req.onerror   = () => res(null);
+  });
+}
+async function idbSet(store, key, val) {
+  const db = await openIDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(store, 'readwrite');
+    tx.objectStore(store).put(val, key);
+    tx.oncomplete = res;
+    tx.onerror    = () => rej(tx.error);
+  });
+}
+async function idbDelete(store, key) {
+  const db = await openIDB();
+  return new Promise(res => {
+    const tx = db.transaction(store, 'readwrite');
+    tx.objectStore(store).delete(key);
+    tx.oncomplete = res;
+    tx.onerror    = res;
+  });
+}
+async function idbGetAllKeys(store) {
+  const db = await openIDB();
+  return new Promise(res => {
+    const req = db.transaction(store, 'readonly').objectStore(store).getAllKeys();
+    req.onsuccess = () => res(req.result || []);
+    req.onerror   = () => res([]);
+  });
+}
+async function idbGetAll(store) {
+  const db = await openIDB();
+  return new Promise(res => {
+    const req = db.transaction(store, 'readonly').objectStore(store).getAll();
+    req.onsuccess = () => res(req.result || []);
+    req.onerror   = () => res([]);
+  });
+}
+
+// ══════════════════════════════════════════════════
+//  SAVE STATES
+// ══════════════════════════════════════════════════
+// Each save state is stored in IDB as:
+//   key: "saves:{gameKey}:{slotIndex}"   (4 slots per game)
+//   value: { name, date, thumb (dataURL), gameKey }
+//
+// "Local save state" = screenshot thumbnail + metadata.
+// Ruffle has no serialization API, so we can't truly save emulator RAM —
+// instead this saves a screenshot + timestamp so you can quickly see
+// where you were and restart from a manual in-game save if the game supports it.
+// On "Load" we restart the game and show the screenshot as a reminder.
+
+const MAX_SLOTS = 4;
+
+function getSaveKey(gameKey, slot) { return `${gameKey}::${slot}`; }
+
+async function captureScreenshot() {
+  if (!rufflePlayer) return null;
+  try {
+    // Ruffle renders into a canvas inside its shadow DOM
+    const canvas = rufflePlayer.shadowRoot?.querySelector('canvas');
+    if (!canvas) return null;
+    return new Promise(res => {
+      canvas.toBlob(blob => {
+        if (!blob) { res(null); return; }
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result); // dataURL
+        reader.onerror = () => res(null);
+        reader.readAsDataURL(blob);
+      }, 'image/jpeg', 0.7);
+    });
+  } catch { return null; }
+}
+
+function quickSave() {
+  if (!rufflePlayer || !currentGameKey) { showToast('No game running'); return; }
+  document.getElementById('saveStateName').value = '';
+  document.getElementById('saveNameModal').classList.add('open');
+  setTimeout(() => document.getElementById('saveStateName').focus(), 50);
+}
+function closeSaveNameModal() {
+  document.getElementById('saveNameModal').classList.remove('open');
+}
+
+async function confirmSave() {
+  const nameVal = document.getElementById('saveStateName').value.trim() || 'Save State';
+  closeSaveNameModal();
+
+  // Find first empty slot, or overwrite oldest
+  const slots = await loadAllSlots(currentGameKey);
+  let targetSlot = slots.findIndex(s => !s);
+  if (targetSlot === -1) targetSlot = 0; // overwrite slot 0 if all full
+
+  const thumb = await captureScreenshot();
+  const state = {
+    name:    nameVal,
+    date:    new Date().toISOString(),
+    thumb,
+    gameKey: currentGameKey,
+    slot:    targetSlot,
+  };
+  await idbSet(STORE_SAVES, getSaveKey(currentGameKey, targetSlot), state);
+  renderSavesPanel();
+  showToast(`Saved to slot ${targetSlot + 1}: "${nameVal}"`);
+}
+
+async function loadAllSlots(gameKey) {
+  const slots = [];
+  for (let i = 0; i < MAX_SLOTS; i++) {
+    slots.push(await idbGet(STORE_SAVES, getSaveKey(gameKey, i)));
+  }
+  return slots;
+}
+
+async function renderSavesPanel() {
+  const container = document.getElementById('savesContent');
+  const nameEl    = document.getElementById('savesGameName');
+
+  if (!currentGameKey) {
+    container.innerHTML = '<div class="no-game-msg">Load a game first to manage save states.</div>';
+    nameEl.style.display = 'none';
+    return;
+  }
+
+  nameEl.textContent  = currentGameKey;
+  nameEl.style.display = '';
+
+  const slots = await loadAllSlots(currentGameKey);
+  const grid  = document.createElement('div');
+  grid.className = 'save-states-grid';
+
+  for (let i = 0; i < MAX_SLOTS; i++) {
+    const state = slots[i];
+    const slot  = document.createElement('div');
+    slot.className = 'save-slot' + (state ? ' occupied' : '');
+
+    const thumbEl = document.createElement('div');
+    thumbEl.className = 'slot-thumb';
+    if (state?.thumb) {
+      const img = document.createElement('img');
+      img.src = state.thumb;
+      thumbEl.appendChild(img);
+    } else {
+      thumbEl.innerHTML = `<span class="empty-slot-icon">+</span>`;
+    }
+
+    const infoEl = document.createElement('div');
+    infoEl.className = 'slot-info';
+    infoEl.innerHTML = `
+      <div class="slot-name">${state ? esc(state.name) : `Slot ${i+1} — Empty`}</div>
+      <div class="slot-date">${state ? new Date(state.date).toLocaleString() : '—'}</div>
+    `;
+
+    slot.appendChild(thumbEl);
+    slot.appendChild(infoEl);
+
+    if (state) {
+      const actEl = document.createElement('div');
+      actEl.className = 'slot-actions';
+      const loadBtn = document.createElement('button');
+      loadBtn.className   = 'slot-load-btn';
+      loadBtn.textContent = '▶ Load (Restart)';
+      loadBtn.onclick = () => loadSaveState(state);
+      const delBtn = document.createElement('button');
+      delBtn.className   = 'slot-del-btn';
+      delBtn.textContent = '🗑';
+      delBtn.title = 'Delete save';
+      delBtn.onclick = () => deleteSaveState(currentGameKey, i);
+      actEl.appendChild(loadBtn);
+      actEl.appendChild(delBtn);
+      slot.appendChild(actEl);
+    } else {
+      // Empty slot — click to save here directly
+      thumbEl.style.cursor = 'pointer';
+      thumbEl.title = 'Save to this slot';
+      thumbEl.onclick = () => saveToSlot(i);
+    }
+
+    grid.appendChild(slot);
+  }
+
+  container.innerHTML = '';
+  container.appendChild(grid);
+}
+
+async function saveToSlot(slot) {
+  if (!rufflePlayer || !currentGameKey) { showToast('No game running'); return; }
+  const name  = `Save ${new Date().toLocaleTimeString()}`;
+  const thumb = await captureScreenshot();
+  const state = { name, date: new Date().toISOString(), thumb, gameKey: currentGameKey, slot };
+  await idbSet(STORE_SAVES, getSaveKey(currentGameKey, slot), state);
+  renderSavesPanel();
+  showToast(`Saved to slot ${slot + 1}`);
+}
+
+async function loadSaveState(state) {
+  // Show the screenshot as a reminder overlay, then restart
+  showToast(`Loading save: "${state.name}" — game restarting…`);
+  if (currentCloudGame)          await playCloud(currentCloudGame);
+  else if (currentGameIdx !== -1) await loadGame(currentGameIdx);
+}
+
+async function deleteSaveState(gameKey, slot) {
+  await idbDelete(STORE_SAVES, getSaveKey(gameKey, slot));
+  renderSavesPanel();
+  showToast('Save state deleted');
+}
+
+// ══════════════════════════════════════════════════
+//  CLOUD CACHE helpers
+// ══════════════════════════════════════════════════
+async function refreshCacheSet() {
+  const keys = await idbGetAllKeys(STORE_CACHE);
+  cachedGameIds = new Set(keys);
+  document.getElementById('cacheCount').textContent = cachedGameIds.size;
+}
+refreshCacheSet();
+
+async function clearAllCache() {
+  const db = await openIDB();
+  await new Promise(res => { const tx = db.transaction(STORE_CACHE,'readwrite'); tx.objectStore(STORE_CACHE).clear(); tx.oncomplete = res; });
+  cachedGameIds.clear();
+  document.getElementById('cacheCount').textContent = 0;
+  renderCloudList();
+  showToast('Cloud game cache cleared');
+}
+
+// ══════════════════════════════════════════════════
+//  VIEW MANAGEMENT
+// ══════════════════════════════════════════════════
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view-' + name)?.classList.add('active');
+  if (name === 'admin') loadAdminUsers();
+}
+
+// ══════════════════════════════════════════════════
+//  AUTH
+// ══════════════════════════════════════════════════
+auth.onAuthStateChanged(user => {
+  if (userStatusUnsub) { userStatusUnsub(); userStatusUnsub = null; }
+  if (!user) { showView('auth'); return; }
+  userStatusUnsub = db.collection('users').doc(user.uid).onSnapshot(snap => {
+    if (!snap.exists) { showView('auth'); return; }
+    const data = snap.data();
+    currentUserDoc = { uid: user.uid, ...data };
+    if      (data.status === 'pending')                                showView('pending');
+    else if (data.status === 'revoked' || data.status === 'rejected')  showView('revoked');
+    else if (data.status === 'approved') {
+      document.getElementById('hdr-username').textContent = data.username || user.displayName || user.email;
+      document.getElementById('admin-btn').style.display  = data.role === 'admin' ? '' : 'none';
+      document.getElementById('shareRow').classList.toggle('banned', !!data.cloudBanned);
+      if (data.cloudBanned) document.getElementById('shareToggle').checked = false;
+      showView('app');
+    }
+  }, () => showView('auth'));
+});
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const errEl = document.getElementById('login-error');
+  errEl.classList.remove('show');
+  const p = document.getElementById('remember-me').checked
+    ? firebase.auth.Auth.Persistence.LOCAL
+    : firebase.auth.Auth.Persistence.SESSION;
+  try {
+    await auth.setPersistence(p);
+    await auth.signInWithEmailAndPassword(document.getElementById('login-email').value, document.getElementById('login-pwd').value);
+  } catch (err) { errEl.textContent = authMsg(err.code); errEl.classList.add('show'); }
+}
+
+async function handleRegister(e) {
+  e.preventDefault();
+  const errEl = document.getElementById('reg-error');
+  errEl.classList.remove('show');
+  const username = document.getElementById('reg-username').value.trim();
+  const email    = document.getElementById('reg-email').value.trim();
+  const password = document.getElementById('reg-pwd').value;
+  try {
+    const cred    = await auth.createUserWithEmailAndPassword(email, password);
+    const uid     = cred.user.uid;
+    const existing = await db.collection('users').limit(1).get();
+    const isFirst  = existing.empty;
+    await db.collection('users').doc(uid).set({
+      username, email, cloudBanned: false,
+      status: isFirst ? 'approved' : 'pending',
+      role:   isFirst ? 'admin'    : 'user',
+      createdAt:  firebase.firestore.FieldValue.serverTimestamp(),
+      approvedAt: isFirst ? firebase.firestore.FieldValue.serverTimestamp() : null,
+    });
+  } catch (err) { errEl.textContent = authMsg(err.code); errEl.classList.add('show'); }
+}
+
+async function handleGoogle() {
+  const errEl = document.getElementById('login-error');
+  errEl.classList.remove('show');
+  try {
+    const result = await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+    const user   = result.user;
+    const snap   = await db.collection('users').doc(user.uid).get();
+    if (!snap.exists) {
+      const existing = await db.collection('users').limit(1).get();
+      const isFirst  = existing.empty;
+      await db.collection('users').doc(user.uid).set({
+        username: user.displayName || user.email.split('@')[0],
+        email: user.email, cloudBanned: false,
+        status: isFirst ? 'approved' : 'pending',
+        role:   isFirst ? 'admin'    : 'user',
+        createdAt:  firebase.firestore.FieldValue.serverTimestamp(),
+        approvedAt: isFirst ? firebase.firestore.FieldValue.serverTimestamp() : null,
+      });
+    }
+  } catch (err) { if (err.code !== 'auth/popup-closed-by-user') { errEl.textContent = authMsg(err.code); errEl.classList.add('show'); } }
+}
+
+function switchAuthTab(tab) {
+  document.querySelectorAll('.auth-tab').forEach((t,i) => t.classList.toggle('active', i === (tab==='login'?0:1)));
+  document.getElementById('form-login').style.display    = tab==='login'    ? 'flex':'none';
+  document.getElementById('form-register').style.display = tab==='register' ? 'flex':'none';
+  document.getElementById('login-error').classList.remove('show');
+  document.getElementById('reg-error').classList.remove('show');
+}
+function authMsg(code) {
+  return ({ 'auth/user-not-found':'No account found with that email.', 'auth/wrong-password':'Incorrect password.', 'auth/invalid-credential':'Invalid email or password.', 'auth/email-already-in-use':'An account with this email already exists.', 'auth/invalid-email':'Please enter a valid email address.', 'auth/weak-password':'Password must be at least 6 characters.', 'auth/too-many-requests':'Too many attempts. Please wait.', 'auth/popup-blocked':'Popup blocked — allow popups for this site.' })[code] || 'An error occurred. Please try again.';
+}
+
+// ══════════════════════════════════════════════════
+//  SIDEBAR
+// ══════════════════════════════════════════════════
+function switchSidebarTab(tab) {
+  document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  ['local','saves','cloud'].forEach(p => document.getElementById('panel-'+p).classList.toggle('active', p === tab));
+  if (tab === 'cloud') loadCloudLibrary();
+  if (tab === 'saves') renderSavesPanel();
+}
+
+// ══════════════════════════════════════════════════
+//  SWF DIMENSION DETECTION
+// ══════════════════════════════════════════════════
+async function getSWFDims(file) {
+  try {
+    const bytes = new Uint8Array(await file.slice(0, 64).arrayBuffer());
+    if (String.fromCharCode(bytes[0],bytes[1],bytes[2]) !== 'FWS') return null;
+    let bi = 8, buf = bytes[8], left = 8;
+    function rBits(n) { let r=0; while(n>0){if(left===0){buf=bytes[++bi];left=8;} const t=Math.min(n,left); r=(r<<t)|((buf>>(left-t))&((1<<t)-1)); left-=t; n-=t;} return r; }
+    function rSBits(n){ const v=rBits(n); return v&(1<<(n-1))?v-(1<<n):v; }
+    const nb=rBits(5); if(!nb||nb>31) return null;
+    const xmin=rSBits(nb),xmax=rSBits(nb),ymin=rSBits(nb),ymax=rSBits(nb);
+    const w=Math.round((xmax-xmin)/20), h=Math.round((ymax-ymin)/20);
+    return (w>0&&h>0&&w<10000&&h<10000) ? {width:w,height:h} : null;
+  } catch { return null; }
+}
+async function waitForRuffleMeta(player, ms=7000) {
+  const t0=Date.now();
+  while(Date.now()-t0<ms) { if(player.metadata?.width&&player.metadata?.height) return player.metadata; await new Promise(r=>setTimeout(r,300)); }
+  return null;
+}
+function applyDims(dims) {
+  if (!dims?.width || !dims?.height) return;
+  document.getElementById('ruffleWrap').style.aspectRatio = `${dims.width} / ${dims.height}`;
+  document.getElementById('dimInfo').textContent = `${dims.width} × ${dims.height}px`;
+}
+
+// ══════════════════════════════════════════════════
+//  FILE HANDLING
+// ══════════════════════════════════════════════════
+const uploadZone = document.getElementById('uploadZone');
+const fileInput  = document.getElementById('fileInput');
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('drag-over'); handleFiles([...e.dataTransfer.files]); });
+fileInput.addEventListener('change', e => { handleFiles([...e.target.files]); fileInput.value = ''; });
+
+async function handleFiles(files) {
+  const share = document.getElementById('shareToggle').checked && !currentUserDoc?.cloudBanned;
+  for (const file of files) {
+    const name = file.name.toLowerCase();
+    if      (name.endsWith('.swf')) addSWF(file, share);
+    else if (name.endsWith('.zip')) await processZip(file, share);
+    else showToast(`Unsupported: "${file.name}" — use .swf or .zip`);
+  }
+}
+
+function addSWF(file, share) {
+  if (games.find(g => g.name === file.name)) { showToast(`"${file.name}" already loaded`); return; }
+  games.push({ name: file.name, size: file.size, url: URL.createObjectURL(file), file });
+  renderLibrary();
+  if (currentGameIdx === -1) loadGame(games.length - 1);
+  if (share) uploadToCloud(file).catch(err => showToast('Cloud upload failed: ' + err.message));
+}
+
+async function processZip(zipFile, share) {
+  showToast(`Unpacking "${zipFile.name}"…`);
+  try {
+    const zip = await JSZip.loadAsync(zipFile);
+    const promises = [];
+    zip.forEach((path, entry) => {
+      if (path.toLowerCase().endsWith('.swf') && !entry.dir)
+        promises.push(entry.async('arraybuffer').then(buf => new File([new Blob([buf], {type:'application/x-shockwave-flash'})], path.split('/').pop(), {type:'application/x-shockwave-flash'})));
+    });
+    const swfs = await Promise.all(promises);
+    if (!swfs.length) { showToast(`No SWF files found in "${zipFile.name}"`); return; }
+    let added = 0;
+    for (const f of swfs) {
+      if (!games.find(g => g.name === f.name)) {
+        games.push({ name: f.name, size: f.size, url: URL.createObjectURL(f), file: f });
+        added++;
+        if (share) uploadToCloud(f).catch(() => {});
+      }
+    }
+    renderLibrary();
+    showToast(`${added} game(s) added from "${zipFile.name}"`);
+    if (currentGameIdx === -1 && added) loadGame(games.length - added);
+  } catch (err) { showToast(`ZIP error: ${err.message}`); }
+}
+
+// ══════════════════════════════════════════════════
+//  CLOUD UPLOAD
+// ══════════════════════════════════════════════════
+async function uploadToCloud(file) {
+  if (!currentUserDoc || currentUserDoc.cloudBanned) return;
+  const prog = document.getElementById('uploadProg');
+  const bar  = document.getElementById('uploadProgBar');
+  const lbl  = document.getElementById('progLabel');
+  prog.classList.add('show'); lbl.textContent = `☁ Uploading "${file.name}"…`; lbl.classList.add('show');
+  const ref  = storage.ref(`cloud-games/${currentUserDoc.uid}/${Date.now()}-${file.name}`);
+  const task = ref.put(file);
+  await new Promise((resolve, reject) => {
+    task.on('state_changed',
+      s   => { bar.style.width = (s.bytesTransferred/s.totalBytes*100)+'%'; },
+      err => { prog.classList.remove('show'); lbl.classList.remove('show'); bar.style.width='0%'; reject(err); },
+      async () => {
+        const url = await task.snapshot.ref.getDownloadURL();
+        await db.collection('cloudGames').add({ name:file.name, displayName:file.name.replace(/\.swf$/i,''), size:file.size, storageUrl:url, storagePath:task.snapshot.ref.fullPath, uploadedBy:currentUserDoc.uid, uploadedByName:currentUserDoc.username||currentUserDoc.email, uploadedAt:firebase.firestore.FieldValue.serverTimestamp(), playCount:0 });
+        prog.classList.remove('show'); lbl.classList.remove('show'); bar.style.width='0%';
+        showToast(`"${file.name}" shared ☁`); resolve();
+      }
+    );
+  });
+}
+
+// ══════════════════════════════════════════════════
+//  CLOUD LIBRARY
+// ══════════════════════════════════════════════════
+async function loadCloudLibrary() {
+  const listEl  = document.getElementById('cloudList');
+  const loadEl  = document.getElementById('cloudLoading');
+  loadEl.style.display=''; listEl.style.display='none'; listEl.innerHTML='';
+  try {
+    const snap = await db.collection('cloudGames').orderBy('uploadedAt','desc').get();
+    cloudCache = snap.docs.map(d=>({id:d.id,...d.data()}));
+    document.getElementById('cloudCount').textContent = cloudCache.length;
+    await refreshCacheSet();
+    cloudLibraryLoaded = true;
+    renderCloudList();
+    loadEl.style.display='none'; listEl.style.display='';
+  } catch (err) { loadEl.textContent='Error loading cloud library.'; console.error(err); }
+}
+
+function renderCloudList() {
+  if (!cloudLibraryLoaded) return;  // don't render until library has been fetched
+  const listEl  = document.getElementById('cloudList');
+  listEl.innerHTML = '';
+  const isAdmin = currentUserDoc?.role === 'admin';
+  if (!cloudCache.length) { listEl.innerHTML='<div class="empty-lib">No cloud games yet.<br/>Upload with "Share to Cloud" on.</div>'; return; }
+  cloudCache.forEach(game => {
+    const isActive  = currentCloudGame?.id === game.id;
+    const isCached  = cachedGameIds.has(game.id);
+    const canDelete = isAdmin || game.uploadedBy === currentUserDoc?.uid;
+    const item = document.createElement('div');
+    item.className = 'cloud-item' + (isActive ? ' active' : '');
+    item.innerHTML = `
+      <div class="g-icon">${emoji(game.name)}</div>
+      <div class="g-info">
+        <div class="g-name" title="${esc(game.displayName)}">${esc(game.displayName)}</div>
+        <div class="g-meta">${fmt(game.size)} · ▶ ${game.playCount||0} ${isCached?'<span class="cache-tag">💾</span>':'<span class="cloud-tag">☁</span>'}</div>
+      </div>
+      <div class="cloud-actions">
+        ${isCached?`<button class="rm-btn" title="Clear from cache" onclick="evictCache(event,'${game.id}')">🗑</button>`:''}
+        ${canDelete?`<button class="rm-btn" title="Delete from cloud" onclick="openDeleteCloudModal(event,'${game.id}','${esc(game.storagePath||'')}','${esc(game.uploadedBy||'')}','${esc(game.uploadedByName||'')}')">✕</button>`:''}
+      </div>
+    `;
+    item.addEventListener('click', e => { if (e.target.classList.contains('rm-btn')) return; playCloud(game); });
+    listEl.appendChild(item);
+  });
+}
+
+async function evictCache(e, gameId) {
+  e.stopPropagation();
+  await idbDelete(STORE_CACHE, gameId);
+  cachedGameIds.delete(gameId);
+  document.getElementById('cacheCount').textContent = cachedGameIds.size;
+  renderCloudList(); showToast('Removed from cache');
+}
+
+async function playCloud(game) {
+  currentCloudGame = game; currentGameIdx = -1;
+  renderLibrary(); renderCloudList();
+  db.collection('cloudGames').doc(game.id).update({playCount: firebase.firestore.FieldValue.increment(1)}).catch(()=>{});
+  await launchRuffle({url:null, cloudGame:game, name:game.displayName, size:game.size, file:null});
+}
+
+function openDeleteCloudModal(e, gameId, storagePath, uploaderUid, uploaderName) {
+  e.stopPropagation();
+  pendingDeleteCloudId=gameId; pendingDeleteCloudPath=storagePath; pendingDeleteUploaderUid=uploaderUid;
+  document.getElementById('dcm-sub').textContent = `Uploader: ${uploaderName||uploaderUid}`;
+  document.getElementById('dcm-uploader-label').textContent = `"${uploaderName||uploaderUid}" will no longer be able to share files.`;
+  document.getElementById('dcm-ban').checked = false;
+  document.getElementById('dcm-ban').parentElement.style.display = (uploaderUid===currentUserDoc?.uid) ? 'none':'';
+  document.getElementById('deleteCloudModal').classList.add('open');
+}
+function closeDeleteCloudModal() { document.getElementById('deleteCloudModal').classList.remove('open'); pendingDeleteCloudId=null; pendingDeleteCloudPath=null; pendingDeleteUploaderUid=null; }
+async function confirmDeleteCloud() {
+  if (!pendingDeleteCloudId) return;
+  const banUser = document.getElementById('dcm-ban').checked;
+  closeDeleteCloudModal();
+  try {
+    await db.collection('cloudGames').doc(pendingDeleteCloudId).delete();
+    if (pendingDeleteCloudPath) await storage.ref(pendingDeleteCloudPath).delete().catch(()=>{});
+    await idbDelete(STORE_CACHE, pendingDeleteCloudId);
+    cachedGameIds.delete(pendingDeleteCloudId);
+    if (banUser && pendingDeleteUploaderUid) { await db.collection('users').doc(pendingDeleteUploaderUid).update({cloudBanned:true}); showToast('Game deleted + uploader banned'); }
+    else showToast('Cloud game deleted');
+    if (currentCloudGame?.id===pendingDeleteCloudId) stopGame();
+    cloudCache = cloudCache.filter(g=>g.id!==pendingDeleteCloudId);
+    document.getElementById('cloudCount').textContent = cloudCache.length;
+    document.getElementById('cacheCount').textContent = cachedGameIds.size;
+    cloudLibraryLoaded = true;
+    renderCloudList();
+  } catch (err) { showToast('Delete failed: '+err.message); }
+}
+
+// ══════════════════════════════════════════════════
+//  LOCAL LIBRARY
+// ══════════════════════════════════════════════════
+function renderLibrary() {
+  const list  = document.getElementById('gameList');
+  const empty = document.getElementById('emptyLib');
+  document.getElementById('gameCount').textContent = games.length;
+  list.querySelectorAll('.game-item').forEach(el => el.remove());
+  if (!games.length) { empty.style.display=''; return; }
+  empty.style.display = 'none';
+  games.forEach((game, i) => {
+    const item = document.createElement('div');
+    item.className = 'game-item' + (i===currentGameIdx?' active':'');
+    item.innerHTML = `
+      <div class="g-icon">${emoji(game.name)}</div>
+      <div class="g-info">
+        <div class="g-name" title="${esc(game.name)}">${esc(game.name.replace(/\.swf$/i,''))}</div>
+        <div class="g-meta">${fmt(game.size)}</div>
+      </div>
+      <button class="rm-btn" onclick="removeGame(event,${i})" title="Remove">✕</button>
+    `;
+    item.addEventListener('click', e => { if (!e.target.classList.contains('rm-btn')) loadGame(i); });
+    list.appendChild(item);
+  });
+}
+
+// ══════════════════════════════════════════════════
+//  PLAYER
+// ══════════════════════════════════════════════════
+async function loadGame(idx) {
+  const game = games[idx];
+  if (!game) return;
+  currentGameIdx=idx; currentCloudGame=null;
+  renderLibrary(); renderCloudList();
+  await launchRuffle({url:game.url, cloudGame:null, name:game.name.replace(/\.swf$/i,''), size:game.size, file:game.file});
+}
+
+// Build Ruffle load options from current performance settings
+function buildRuffleOptions(url) {
+  const opts = { url, autoplay: 'on', unmuteOverlay: 'hidden' };
+  if (perfSettings.renderer)  opts.preferredRenderer = perfSettings.renderer;
+  if (perfSettings.quality)   opts.quality           = perfSettings.quality;
+  if (perfSettings.frameRate) opts.frameRate         = parseFloat(perfSettings.frameRate);
+  if (perfSettings.maxExec) {
+    const secs = parseFloat(perfSettings.maxExec);
+    opts.maxExecutionDuration = secs === 0 ? { secs: 999999, nanos: 0 } : { secs, nanos: 0 };
+  }
+  return opts;
+}
+
+async function launchRuffle({ url, cloudGame, name, size, file }) {
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('playerWrap').style.display = '';
+  document.getElementById('gameTitle').textContent    = name;
+  document.getElementById('fileInfo').textContent     = fmt(size);
+  document.getElementById('dimInfo').textContent      = '…';
+  document.getElementById('ruffleWrap').style.aspectRatio = '4 / 3';
+  isPaused = false;
+  document.getElementById('pauseBtn').textContent = '❚❚ Pause';
+
+  // Set stable key for save states
+  currentGameKey = name;
+  renderSavesPanel();
+
+  const wrap = document.getElementById('ruffleWrap');
+  if (rufflePlayer) { try { rufflePlayer.remove(); } catch {} rufflePlayer = null; }
+
+  let finalUrl = url;
+  if (cloudGame) {
+    const cached = await idbGet(STORE_CACHE, cloudGame.id);
+    if (cached) { finalUrl = URL.createObjectURL(cached); showToast('▶ Playing from cache 💾'); }
+    else {
+      showToast('⟳ Fetching from cloud…');
+      try {
+        const blob = await fetch(cloudGame.storageUrl).then(r => r.blob());
+        await idbSet(STORE_CACHE, cloudGame.id, blob);
+        cachedGameIds.add(cloudGame.id);
+        document.getElementById('cacheCount').textContent = cachedGameIds.size;
+        finalUrl = URL.createObjectURL(blob);
+        renderCloudList();
+      } catch { finalUrl = cloudGame.storageUrl; showToast('Cache failed — streaming directly'); }
+    }
+  }
+
+  try {
+    const ruffle = getRuffle();
+    if (!ruffle) throw new Error('Ruffle is still initializing — try again in a moment.');
+    const player = ruffle.createPlayer();
+    player.style.width = '100%'; player.style.height = '100%';
+    wrap.appendChild(player);
+    rufflePlayer = player;
+    player.load(buildRuffleOptions(finalUrl));
+    document.getElementById('sDot').className    = 's-dot on';
+    document.getElementById('sText').textContent = 'RUNNING';
+
+    // Detect native game dimensions
+    const dims = file ? (await getSWFDims(file)) : null;
+    applyDims(dims || await waitForRuffleMeta(player));
+  } catch (err) {
+    showToast('Error: ' + err.message);
+    document.getElementById('sText').textContent = 'ERROR';
+  }
+}
+
+function togglePause() {
+  if (!rufflePlayer) return;
+  if (isPaused) {
+    try { rufflePlayer.resume(); } catch {}
+    isPaused=false;
+    document.getElementById('pauseBtn').textContent='❚❚ Pause';
+    document.getElementById('sDot').className='s-dot on';
+    document.getElementById('sText').textContent='RUNNING';
+  } else {
+    try { rufflePlayer.suspend(); } catch {}
+    isPaused=true;
+    document.getElementById('pauseBtn').textContent='▶ Play';
+    document.getElementById('sDot').className='s-dot';
+    document.getElementById('sText').textContent='PAUSED';
+  }
+}
+
+function restartGame() {
+  if (currentCloudGame)          playCloud(currentCloudGame);
+  else if (currentGameIdx !== -1) loadGame(currentGameIdx);
+}
+function stopGame() {
+  if (rufflePlayer) { try { rufflePlayer.remove(); } catch {} rufflePlayer = null; }
+  currentGameIdx=-1; currentCloudGame=null; isPaused=false; currentGameKey=null;
+  document.getElementById('pauseBtn').textContent='❚❚ Pause';
+  document.getElementById('sDot').className='s-dot'; document.getElementById('sText').textContent='STOPPED';
+  document.getElementById('emptyState').style.display='';
+  document.getElementById('playerWrap').style.display='none';
+  renderLibrary(); renderCloudList(); renderSavesPanel();
+}
+function removeGame(e, i) {
+  e.stopPropagation();
+  URL.revokeObjectURL(games[i].url);
+  if (currentGameIdx===i) stopGame();
+  games.splice(i,1);
+  if (currentGameIdx>i) currentGameIdx--;
+  renderLibrary();
+  showToast('Game removed');
+}
+function toggleFullscreen() {
+  const wrap = document.getElementById('ruffleWrap');
+  document.fullscreenElement ? document.exitFullscreen?.() : wrap.requestFullscreen?.();
+}
+document.addEventListener('keydown', e => { if (e.key==='f' && document.activeElement.tagName!=='INPUT') toggleFullscreen(); });
+
+// ══════════════════════════════════════════════════
+//  ADMIN
+// ══════════════════════════════════════════════════
+async function loadAdminUsers() {
+  const tbody = document.getElementById('usersTbody');
+  tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px;font-size:0.62rem;">Loading…</td></tr>';
+  try {
+    const snap = await db.collection('users').orderBy('createdAt','desc').get();
+    allUsers = snap.docs.map(d=>({uid:d.id,...d.data()}));
+    renderUsersTable();
+  } catch (err) { tbody.innerHTML=`<tr><td colspan="5" style="color:var(--accent);padding:16px;font-size:0.62rem;">Error: ${esc(err.message)}</td></tr>`; }
+}
+function filterUsers(f) {
+  activeFilter=f;
+  document.querySelectorAll('.filter-btn').forEach(b=>b.classList.toggle('active',b.dataset.f===f));
+  renderUsersTable();
+}
+function renderUsersTable() {
+  const tbody   = document.getElementById('usersTbody');
+  const visible = activeFilter==='all' ? allUsers : allUsers.filter(u=>u.status===activeFilter);
+  tbody.innerHTML='';
+  if (!visible.length) { tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px;font-size:0.62rem;">No users found.</td></tr>'; return; }
+  visible.forEach(u => {
+    const date   = u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : '—';
+    const isSelf = u.uid===auth.currentUser?.uid;
+    const tr = document.createElement('tr');
+    tr.innerHTML=`
+      <td><div class="u-name">${esc(u.username||'—')}${isSelf?' <span style="color:var(--muted);font-size:0.48rem;">(you)</span>':''}</div><div class="u-email">${esc(u.email||'—')}</div></td>
+      <td><span class="tag t-${u.status}">${u.status}</span>${u.cloudBanned?'<span class="tag t-cloudbanned">☁ banned</span>':''}</td>
+      <td><span class="tag t-${u.role}">${u.role}</span></td>
+      <td style="font-size:0.57rem;color:var(--muted);">${date}</td>
+      <td><div class="act-cell">
+        ${u.status==='pending'?`<button class="btn btn-success btn-xs" onclick="setStatus('${u.uid}','approved')">✓ Approve</button><button class="btn btn-danger btn-xs" onclick="setStatus('${u.uid}','rejected')">✕ Reject</button>`:''}
+        ${u.status==='approved'?`<button class="btn btn-warn btn-xs" onclick="setStatus('${u.uid}','revoked')">⊘ Revoke</button>`:''}
+        ${(u.status==='revoked'||u.status==='rejected')?`<button class="btn btn-success btn-xs" onclick="setStatus('${u.uid}','approved')">↺ Restore</button>`:''}
+        ${u.cloudBanned?`<button class="btn btn-success btn-xs" onclick="setCloudBan('${u.uid}',false)">☁ Unban</button>`:`<button class="btn btn-warn btn-xs" onclick="setCloudBan('${u.uid}',true)">☁ Ban</button>`}
+        <button class="btn btn-ghost btn-xs" onclick="openEdit('${u.uid}')">✎ Edit</button>
+        ${!isSelf?`<button class="btn btn-danger btn-xs" onclick="confirmDeleteUser('${u.uid}')">🗑</button>`:''}
+      </div></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+async function setStatus(uid,status) {
+  try { const upd={status}; if(status==='approved') upd.approvedAt=firebase.firestore.FieldValue.serverTimestamp(); await db.collection('users').doc(uid).update(upd); const idx=allUsers.findIndex(u=>u.uid===uid); if(idx!==-1) Object.assign(allUsers[idx],upd); renderUsersTable(); showToast(`Status → ${status}`); } catch(err){showToast('Error: '+err.message);}
+}
+async function setCloudBan(uid,banned) {
+  try { await db.collection('users').doc(uid).update({cloudBanned:banned}); const idx=allUsers.findIndex(u=>u.uid===uid); if(idx!==-1) allUsers[idx].cloudBanned=banned; renderUsersTable(); showToast(banned?'Cloud ban applied':'Cloud ban lifted'); } catch(err){showToast('Error: '+err.message);}
+}
+function openEdit(uid) {
+  const u=allUsers.find(x=>x.uid===uid); if(!u) return;
+  editingUid=uid;
+  document.getElementById('editModalSub').textContent=`UID: ${uid}`;
+  document.getElementById('eu-username').value=u.username||'';
+  document.getElementById('eu-email').value=u.email||'';
+  document.getElementById('eu-status').value=u.status||'pending';
+  document.getElementById('eu-role').value=u.role||'user';
+  document.getElementById('eu-cloudbanned').checked=!!u.cloudBanned;
+  document.getElementById('editModal').classList.add('open');
+}
+function closeEditModal() { document.getElementById('editModal').classList.remove('open'); editingUid=null; }
+async function saveUserEdit() {
+  if(!editingUid) return;
+  const username=document.getElementById('eu-username').value.trim(), email=document.getElementById('eu-email').value.trim(), status=document.getElementById('eu-status').value, role=document.getElementById('eu-role').value, cloudBanned=document.getElementById('eu-cloudbanned').checked;
+  try {
+    const upd={username,email,status,role,cloudBanned}; if(status==='approved') upd.approvedAt=firebase.firestore.FieldValue.serverTimestamp();
+    await db.collection('users').doc(editingUid).update(upd);
+    const prev=allUsers.find(u=>u.uid===editingUid);
+    if(prev&&prev.email!==email) { try{ if(typeof functions!=='undefined') await functions.httpsCallable('adminUpdateEmail')({uid:editingUid,newEmail:email}); }catch(err){showToast('Firestore updated; deploy Functions to sync Auth email too.');} }
+    const idx=allUsers.findIndex(u=>u.uid===editingUid); if(idx!==-1) Object.assign(allUsers[idx],{username,email,status,role,cloudBanned});
+    renderUsersTable(); closeEditModal(); showToast('User updated');
+  } catch(err){showToast('Error: '+err.message);}
+}
+async function sendPwdReset() {
+  const email=document.getElementById('eu-email').value.trim(); if(!email){showToast('No email set');return;}
+  try{await auth.sendPasswordResetEmail(email);showToast(`Reset email sent to ${email}`);}catch(err){showToast('Error: '+err.message);}
+}
+function confirmDeleteUser(uid) { const u=allUsers.find(x=>x.uid===uid); confirm2('Delete User',`Permanently delete "${u?.username||uid}"?`,()=>deleteUser(uid)); }
+async function deleteUser(uid) {
+  try { await db.collection('users').doc(uid).delete(); try{ if(typeof functions!=='undefined') await functions.httpsCallable('adminDeleteUser')({uid}); }catch{} allUsers=allUsers.filter(u=>u.uid!==uid); renderUsersTable(); showToast('User deleted'); } catch(err){showToast('Error: '+err.message);}
+}
+
+// ══════════════════════════════════════════════════
+//  CONFIRM MODAL
+// ══════════════════════════════════════════════════
+let _confirmCb=null;
+function confirm2(title,body,cb) { document.getElementById('cfmTitle').textContent=title; document.getElementById('cfmBody').textContent=body; _confirmCb=cb; document.getElementById('confirmModal').classList.add('open'); }
+function closeConfirm() { document.getElementById('confirmModal').classList.remove('open'); _confirmCb=null; }
+document.getElementById('cfmOk').addEventListener('click',()=>{_confirmCb?.();closeConfirm();});
+
+// ══════════════════════════════════════════════════
+//  UTILITIES
+// ══════════════════════════════════════════════════
+function showToast(msg) { const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),2800); }
+function fmt(b) { if(!b) return '—'; if(b<1024) return b+' B'; if(b<1048576) return (b/1024).toFixed(1)+' KB'; return (b/1048576).toFixed(1)+' MB'; }
+function emoji(n) {
+  n=(n||'').toLowerCase();
+  if(n.includes('race')||n.includes('car')||n.includes('driv')) return '🏎️';
+  if(n.includes('shoot')||n.includes('gun')||n.includes('war'))  return '🎯';
+  if(n.includes('puzzle')||n.includes('tetris')||n.includes('block')) return '🧩';
+  if(n.includes('jump')||n.includes('run')||n.includes('mario')) return '🏃';
+  if(n.includes('zombie')||n.includes('dead')) return '🧟';
+  if(n.includes('tower')||n.includes('defense')) return '🏰';
+  if(n.includes('fish')||n.includes('sea'))   return '🐟';
+  if(n.includes('ball')||n.includes('sport')) return '⚽';
+  return '🎮';
+}
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// Init
+renderLibrary();
+</script>
+</body>
+</html>

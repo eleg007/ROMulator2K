@@ -1,0 +1,14 @@
+[Unit]
+Description=ROMulator2K ngrok tunnel
+After=network.target romulator2k-backend.service
+Wants=romulator2k-backend.service
+
+[Service]
+Type=simple
+User=debian
+ExecStart=/usr/local/bin/ngrok http 8010 --config=/home/debian/projects/ROMulator2K/ngrok.yml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

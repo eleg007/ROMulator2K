@@ -1,0 +1,152 @@
+
+"use strict";
+// ══════════════════════════════════════════════════════════════
+//  ROMulator2K emulator iframe — boots EmulatorJS for one game.
+//  Protocol (postMessage, same-origin only):
+//    iframe → parent : {type:'ejs-init'}                     ready for ROM bytes
+//    iframe → parent : {type:'ejs-status', status, message}  loading|ready|running|error
+//    parent → iframe : {type:'ejs-rom', file: File}          start boot
+//    parent → iframe : {type:'ejs-command', id, action, …}   control bridge
+//    iframe → parent : {type:'ejs-result', id, action, ok, …}
+// ══════════════════════════════════════════════════════════════
+
+const params    = new URLSearchParams(location.search);
+const CORE      = params.get('core') || '';
+const NAME      = params.get('name') || 'game';
+const URL_ROM   = params.get('url') || null;   // optional direct URL (cloud streaming fallback)
+const PARENT_ORIGIN = params.get('origin') || '*';
+
+let bootStarted = false;
+let romFile     = null;
+
+function toParent(msg) { try { parent.postMessage(msg, PARENT_ORIGIN); } catch {} }
+
+function status(s, message) {
+  toParent({ type: 'ejs-status', status: s, message: message || '' });
+  if (s === 'error') {
+    const el = document.getElementById('boot-err');
+    if (message) { el.textContent = 'Emulator error: ' + message; el.style.display = 'block'; }
+  }
+}
+
+window.addEventListener('error', e => {
+  if (!bootStarted) status('error', e.message || 'script error');
+});
+window.addEventListener('unhandledrejection', e => {
+  const m = (e.reason && (e.reason.message || e.reason)) || 'promise rejection';
+  if (!bootStarted) status('error', String(m));
+});
+
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => res();
+    s.onerror = () => rej(new Error('failed to load ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+async function boot(file) {
+  if (bootStarted) return;
+  bootStarted = true;
+  try {
+    status('loading', 'loading manifest');
+    const manifest = await (await fetch('/assets/emulators/manifest.json')).json();
+    const sys = (manifest.systems || {})[CORE];
+    if (!sys) throw new Error('unknown system: ' + CORE);
+    const gameUrl = file || URL_ROM;
+    if (!gameUrl) throw new Error('no ROM provided');
+
+    // EmulatorJS global configuration (read by loader.js at load time)
+    window.EJS_player        = '#game';
+    window.EJS_core          = sys.core || CORE;
+    window.EJS_gameName      = NAME;
+    window.EJS_gameUrl       = gameUrl;
+    window.EJS_pathtodata    = manifest.dataPath;
+    window.EJS_startOnLoaded = true;
+    // their check is `disableAutoLang !== false` → explicitly false skips the localization fetch
+    window.EJS_disableAutoLang = false;
+    // hide EmulatorJS's own save/load state buttons — the app has a unified Saves panel
+    window.EJS_Buttons       = { saveState: false, loadState: false };
+
+    window.EJS_ready       = () => status('ready', 'emulator constructed');
+    window.EJS_onGameStart = () => status('running', 'game started');
+
+    status('loading', 'loading emulator');
+    await loadScript((manifest.dataPath || 'https://cdn.emulatorjs.org/4.2.3/data/') + 'loader.js');
+  } catch (err) {
+    status('error', (err && err.message) || String(err));
+  }
+}
+
+// ── Control bridge ─────────────────────────────────────────────
+function reply(cmd, data) {
+  toParent(Object.assign({ type: 'ejs-result', id: cmd.id, action: cmd.action }, data || {}));
+}
+
+function handleCommand(cmd) {
+  const emu = window.EJS_emulator;
+  try {
+    switch (cmd.action) {
+      case 'ping':
+        reply(cmd, { ok: true });
+        break;
+      case 'pause':
+        if (emu && typeof emu.pause === 'function') { emu.pause(); reply(cmd, { ok: true }); }
+        else reply(cmd, { ok: false, error: 'pause unavailable' });
+        break;
+      case 'play':
+        if (emu && typeof emu.play === 'function') { emu.play(); reply(cmd, { ok: true }); }
+        else reply(cmd, { ok: false, error: 'play unavailable' });
+        break;
+      case 'reset':
+        if (emu && emu.gameManager && emu.gameManager.restart) { emu.gameManager.restart(); reply(cmd, { ok: true }); }
+        else reply(cmd, { ok: false, error: 'reset unavailable' });
+        break;
+      case 'saveState': {
+        if (!emu || !emu.gameManager) { reply(cmd, { ok: false, error: 'not ready' }); break; }
+        const bytes = emu.gameManager.getState();      // fresh Uint8Array copy
+        reply(cmd, { ok: true, bytes });
+        break;
+      }
+      case 'loadState': {
+        if (!emu || !emu.gameManager) { reply(cmd, { ok: false, error: 'not ready' }); break; }
+        const data = (cmd.bytes instanceof ArrayBuffer)
+          ? new Uint8Array(cmd.bytes)
+          : new Uint8Array(cmd.bytes.buffer, cmd.bytes.byteOffset, cmd.bytes.byteLength);
+        emu.gameManager.loadState(data);
+        reply(cmd, { ok: true });
+        break;
+      }
+      case 'screenshot': {
+        if (!emu || !emu.canvas) { reply(cmd, { ok: false, error: 'not ready' }); break; }
+        reply(cmd, { ok: true, dataUrl: emu.canvas.toDataURL('image/jpeg', 0.7) });
+        break;
+      }
+      case 'status':
+        reply(cmd, { ok: true, started: !!(emu && emu.started), paused: !!(emu && emu.paused) });
+        break;
+      default:
+        reply(cmd, { ok: false, error: 'unknown action: ' + cmd.action });
+    }
+  } catch (err) {
+    reply(cmd, { ok: false, error: (err && err.message) || String(err) });
+  }
+}
+
+window.addEventListener('message', e => {
+  if (e.origin !== location.origin) return;      // same-origin parent only
+  const d = e.data;
+  if (!d || typeof d !== 'object') return;
+  if (d.type === 'ejs-rom' && !bootStarted && d.file) {
+    romFile = d.file;
+    boot(romFile);
+  } else if (d.type === 'ejs-command') {
+    handleCommand(d);
+  }
+});
+
+// Announce that listeners are attached and the ROM may be sent.
+toParent({ type: 'ejs-init' });
+if (URL_ROM) boot(null);   // URL mode needs no handoff — boot immediately

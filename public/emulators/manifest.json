@@ -1,0 +1,31 @@
+{
+  "engine": "emulatorjs",
+  "version": "4.2.3",
+  "dataPath": "/assets/emulators/ejs/",
+  "systems": {
+    "nes": {
+      "core": "nes",
+      "label": "NES",
+      "aspect": "4 / 3",
+      "exts": [".nes"]
+    },
+    "snes": {
+      "core": "snes",
+      "label": "SNES",
+      "aspect": "4 / 3",
+      "exts": [".sfc", ".smc", ".fig", ".swc"]
+    },
+    "gb": {
+      "core": "gb",
+      "label": "Game Boy",
+      "aspect": "10 / 9",
+      "exts": [".gb", ".gbc", ".sgb"]
+    },
+    "genesis": {
+      "core": "segaMD",
+      "label": "Genesis",
+      "aspect": "4 / 3",
+      "exts": [".md", ".gen", ".bin", ".smd"]
+    }
+  }
+}
